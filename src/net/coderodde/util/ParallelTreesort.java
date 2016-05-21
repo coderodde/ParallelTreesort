@@ -40,86 +40,43 @@ public class ParallelTreesort {
         
         final int numberOfThreads = Math.min(machineParallelism, commitThreads);
         
-          /////////////////////////
-         //// Shuffling stage ////
-        /////////////////////////
-        final ShuffleThread[] shuffleThreads = 
-          new ShuffleThread[numberOfThreads];
-        
-        int tmpFromIndex = fromIndex;
-        final int chunkLength = rangeLength / numberOfThreads;
-        
-        // Spawn all but the last shuffle threads.
-        for (int i = 0; i < shuffleThreads.length - 1; ++i) {
-            shuffleThreads[i] = new ShuffleThread(array,
-                                                  tmpFromIndex,
-                                                  tmpFromIndex += chunkLength);
-            shuffleThreads[i].start();
-        }
-        
-        // Run the last shuffle thread in current thread while others are on
-        // their way.
-        new ShuffleThread(array, tmpFromIndex, toIndex).run();
-        
-        for (int i = 0; i < shuffleThreads.length - 1; ++i) {
-            try {
-                shuffleThreads[i].join();
-            } catch (final InterruptedException ex) {
-                throw new IllegalStateException(
-                        "The ShuffleThread " + shuffleThreads[i].getName() +
-                        " threw an " + ex.getClass().getSimpleName(), ex);
-            }
-        }
+        final TreeBuilderThread[] treeBuilderThreads = 
+          new TreeBuilderThread[numberOfThreads];
         
           /////////////////////////////
          //// Tree building stage ////
         /////////////////////////////
+        int tmpFromIndex = fromIndex;
+        final int chunkLength = rangeLength / numberOfThreads;
         
+        // Spawn all but the last shuffle threads.
+        for (int i = 0; i < treeBuilderThreads.length - 1; ++i) {
+            treeBuilderThreads[i] = 
+                    new TreeBuilderThread(array,
+                                          tmpFromIndex,
+                                          tmpFromIndex += chunkLength);
+            treeBuilderThreads[i].start();
+        }
         
+        // Run the last shuffle thread in current thread while others are on
+        // their way.
+        new TreeBuilderThread(array, tmpFromIndex, toIndex).run();
+        
+        for (int i = 0; i < treeBuilderThreads.length - 1; ++i) {
+            try {
+                treeBuilderThreads[i].join();
+            } catch (final InterruptedException ex) {
+                throw new IllegalStateException(
+                        "The ShuffleThread " + treeBuilderThreads[i].getName() +
+                        " threw an " + ex.getClass().getSimpleName(), ex);
+            }
+        }
     }
     
     public static void sort2(final int[] array, 
                              final int fromIndex, 
                              final int toIndex) {
         
-    }
-    
-    /**
-     * This subclass of {@link java.lang.Thread} is responsible for shuffling 
-     * the input range.
-     */
-    private static final class ShuffleThread extends Thread {
-        
-        private final int[] array;
-        private final int fromIndex;
-        private final int toIndex;
-        private final Random random = new Random();
-        
-        ShuffleThread(final int[] array,
-                      final int fromIndex,
-                      final int toIndex) {
-            this.array = array;
-            this.fromIndex = fromIndex;
-            this.toIndex = toIndex;
-        }
-        
-        @Override
-        public void run() {
-            final int rangeLength = toIndex - fromIndex;
-            
-            for (int i = fromIndex; i < toIndex; ++i) {
-                int randomIndex = fromIndex + random.nextInt(rangeLength);
-                swap(array, i, randomIndex);
-            }
-        }
-        
-        private static void swap(final int[] array, 
-                                 final int index1, 
-                                 final int index2) {
-            final int tmp = array[index1];
-            array[index1] = array[index2];
-            array[index2] = tmp;
-        }
     }
     
     private static final class TreeBuilderThread extends Thread {
@@ -130,15 +87,17 @@ public class ParallelTreesort {
         private TreeNode root;
         private final HashTableEntry[] table;
         private final int mask;
+        private final int rangeLength;
+        private final Random random = new Random();
         
         TreeBuilderThread(final int[] array,
                           final int fromIndex,
                           final int toIndex) {
-            this.array = array;
-            this.fromIndex = fromIndex;
-            this.toIndex = toIndex;
+            this.array       = array;
+            this.fromIndex   = fromIndex;
+            this.toIndex     = toIndex;
+            this.rangeLength = toIndex - fromIndex;
             
-            final int rangeLength = toIndex - fromIndex;
             final int tableCapacity = fixCapacity(rangeLength);
             
             this.mask = tableCapacity - 1;
@@ -147,6 +106,13 @@ public class ParallelTreesort {
         
         @Override
         public void run() {
+            // Shuffle the array in order to make sure that the result tree
+            // has (in average) logarithmic height.
+            for (int i = fromIndex; i < toIndex; ++i) {
+                int randomIndex = fromIndex + random.nextInt(rangeLength);
+                swap(array, i, randomIndex);
+            }
+            
             final int initialKey = array[fromIndex];
             root = new TreeNode(initialKey);
             table[getHashTableIndex(initialKey)] = 
@@ -179,6 +145,14 @@ public class ParallelTreesort {
                     insertTreeNode(newNode);
                 }
             }
+        }
+        
+        private static void swap(final int[] array, 
+                                 final int index1, 
+                                 final int index2) {
+            final int tmp = array[index1];
+            array[index1] = array[index2];
+            array[index2] = tmp;
         }
         
         private HashTableEntry 
